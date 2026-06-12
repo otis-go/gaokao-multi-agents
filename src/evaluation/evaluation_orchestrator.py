@@ -10,10 +10,10 @@ According to agent_pro_flowchart.png, Stage 2 contains two independent evaluatio
 1. AI-centric Evaluation - Multi-model ensemble scoring
 2. Pedagogical Evaluation - Based on ABC_evaluation_prompt.json prompt_eval
 
-[2025-12 Refactoring]
-- Supports running gk/cs/ai evaluation independently
-- Supports gk+ai, cs+ai combined evaluation
-- [2026-01] Removed gk+cs composite mode
+Evaluation mode notes:
+- Runs gk / cs / ai evaluation independently
+- Combined modes are parsed by substring, so any combination of ai/gk/cs is
+  supported (ai, gk, cs, gk+cs, ai+gk, ai+cs, ai+gk+cs)
 - gk and cs evaluation can reuse ai evaluation results
 - Evaluation results are independently tracked, no interference
 
@@ -139,14 +139,14 @@ class EvaluationOrchestrator:
     """
     Stage 2 Orchestrator (Streamlined version, main pipeline only)
 
-    [2025-12 Refactoring]
-    Supports independent evaluation modes:
+    Supported evaluation modes (parsed by substring, so any ai/gk/cs combination works):
     - eval_mode="ai": AI evaluation only
     - eval_mode="gk": GK pedagogical evaluation only
     - eval_mode="cs": CS pedagogical evaluation only
+    - eval_mode="gk+cs": GK + CS pedagogical evaluation
     - eval_mode="ai+gk": AI + GK pedagogical evaluation
     - eval_mode="ai+cs": AI + CS pedagogical evaluation
-    [2026-01 Refactoring] Removed gk+cs and ai+gk+cs composite modes
+    - eval_mode="ai+gk+cs": AI + GK + CS evaluation
 
     Constraints:
     - Single public entry point: run(...)
@@ -170,13 +170,15 @@ class EvaluationOrchestrator:
         - Prompt logs must be saved under the current experiment's output_dir for traceability
         - Dict is the single source of truth for weights; backward compatible with list format when needed
 
-        [2026-01 Refactoring] eval_mode parameter (gk+cs mode removed):
+        eval_mode parameter (any combination of ai/gk/cs is accepted):
         - None: Determined by config settings (default behavior)
         - "ai": AI evaluation only
         - "gk": GK pedagogical evaluation only
         - "cs": CS pedagogical evaluation only
+        - "gk+cs": GK + CS
         - "ai+gk": AI + GK
         - "ai+cs": AI + CS
+        - "ai+gk+cs": AI + GK + CS
 
         [2026-01 Added] Low-frequency dimension experiment support:
         - Reads low-frequency mode flag from config.pipeline.stage1_ablation.use_low_freq_random
@@ -1095,7 +1097,7 @@ class EvaluationOrchestrator:
             # Score calculation formula explanation
             result["score_calculation"] = {
                 "method": "weighted_average",
-                "description": "Weighted average of dimension scores, dimension weights from ai_eval_prompt.json, model weights from config",
+                "description": "Weighted average of dimension scores, dimension weights from ai_eval.json, model weights from config",
                 "formula": "overall = sum(dimension_score * dimension_weight) / sum(dimension_weight)"
             }
 

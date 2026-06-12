@@ -147,7 +147,6 @@ from src.shared.llm_interface import LLMClient
 from src.shared.prompt_logger import PromptLogger
 
 
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 class Agent2AnchorFinder:
     """
     Agent 2: Anchor Finder.
@@ -466,7 +465,6 @@ class Agent2AnchorFinder:
             anchors = self._fallback_anchor_extraction(paragraphs)
 
         return anchors
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 
     def _lightweight_json_repair(self, json_text: str) -> str:
         """

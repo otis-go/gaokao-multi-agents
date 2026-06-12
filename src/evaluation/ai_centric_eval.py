@@ -10,13 +10,16 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Union
 
 # =============================================================================
-# [2025-12 Refactor] AI Dimension Evaluation Module
+# AI Dimension Evaluation Module
 #
 # Core Design:
 # 1) Config-driven: anchor validation rules loaded from data/ai_eval.json
-# 2) Parse-first: Parse "hard anchors" in reason (K / N / |C| / low-level templates)
-# 3) Pure validation: Non-compliant outputs are marked INVALID
-# 4) No repair calls: INVALID model-dimension pairs are excluded during aggregation
+# 2) Parse-first: parse "hard anchors" in reason (K / N / |C| / low-level templates)
+# 3) Pure validation: non-compliant outputs are marked INVALID
+# 4) No repeated model calls: an INVALID model-dimension pair is never re-queried.
+#    During aggregation its score is fused from the other evaluators on that
+#    dimension; if every evaluator is invalid for a dimension, the dimension
+#    falls back to its configured default level so its weight is preserved.
 #
 # Config File Structure (data/ai_eval.json):
 # - system_prompts: System prompts
@@ -87,7 +90,6 @@ _AI_EVAL_CONFIG = _load_ai_eval_config()
 # 0) Helper Functions: Text Normalization & Negation Protection
 # -----------------------------------------------------------------------------
 _NEG_PREFIX = r"(?:未|不|无|没有|并未|不存在|未见|未发现)"
-_QUOTE_SIGNS = ["“", "”", "‘", "’", "\"", "'"]
 
 
 def _norm_text(s: str) -> str:
@@ -104,10 +106,6 @@ def _has_any(text: str, phrases: List[str]) -> bool:
 def _count_any(text: str, phrases: List[str]) -> int:
     t = _norm_text(text)
     return sum(1 for p in phrases if p.replace(" ", "") in t)
-
-
-def _contains_quote_signal(text: str) -> bool:
-    return any(q in text for q in _QUOTE_SIGNS) or ("引用" in text) or ("触发片段" in text) or ("原文摘录" in text)
 
 
 def _risk_term_is_negated(text: str, term: str, window: int = 4) -> bool:
@@ -163,10 +161,6 @@ def _build_reason_parse_rules() -> Dict[str, Dict[str, Any]]:
         },
         "fairness_regional_gender": {
             "low_templates": ["未发现可引用", "无可引用触发", "故判低", "低（100）", "判低（100）"],
-            "risk_terms_regional": ["区域门槛", "地方知识", "方言", "地方政策", "地方习俗", "区域特有经验"],
-            "risk_terms_stereo": ["刻板印象", "歧视", "歧视性表述", "污名化", "侮辱", "贬损", "负面绑定", "地域黑"],
-            "severity_terms_high": ["严重", "明显", "显著不公", "特定地区考生明显优势", "必须依赖", "关键依赖"],
-            "citation_signal_terms": ["触发片段", "原文摘录", "可引用触发点", "引用", "例如", "如"] + _QUOTE_SIGNS
         },
         "rubric_operational": {
             "point_terms": ["要点", "采分点", "评分要点", "①", "②", "③", "1）", "2）", "3）", "一是", "二是", "三是"],
@@ -198,8 +192,8 @@ def _build_reason_parse_rules() -> Dict[str, Dict[str, Any]]:
                         new_map[k] = v  # Preserve non-numeric keys like "ge2"
                 default_rules[dim_id]["map"] = new_map
 
-            # Merge fairness special fields
-            for key in ["low_templates", "risk_terms_regional", "risk_terms_stereo"]:
+            # Merge fairness low-tier template anchors (the only fairness anchor kept).
+            for key in ["low_templates"]:
                 if key in rule:
                     default_rules[dim_id][key] = rule[key]
 
@@ -264,31 +258,13 @@ def _parse_level_from_reason(dim_id: str, reason: str) -> Optional[str]:
             return "控制良好（难以蒙对）"  # Well controlled (hard to guess)
         return "正常四选一"  # Normal 4-choice
 
-    # 4) fairness_regional_gender: Low templates take priority; medium/high need citation + risk terms (non-negated)
+    # 4) fairness_regional_gender: only the low-tier template is a hard anchor.
+    #    The model's own 中/高 level is trusted as output; no keyword-based risk
+    #    escalation is performed here.
     if dim_id == "fairness_regional_gender":
         rules = REASON_PARSE_RULES[dim_id]
-        # Low templates
         if _has_any(reason, rules["low_templates"]):
             return "低"  # Low
-
-        # Risk detection (with negation protection)
-        risk_terms = rules["risk_terms_regional"] + rules["risk_terms_stereo"]
-        found_risk = False
-        for t in risk_terms:
-            if t in reason and not _risk_term_is_negated(reason, t, window=12):
-                found_risk = True
-                break
-
-        has_cite = _has_any(reason, rules["citation_signal_terms"]) or _contains_quote_signal(reason)
-
-        if found_risk and has_cite:
-            # High vs Medium: check severity terms
-            if _has_any(reason, rules["severity_terms_high"]):
-                return "高"  # High
-            return "中"  # Medium
-
-        # If only general mention of risk without citation: don't force parse, return None
-        # [2025-12 Refactor] Don't use keyword-based level inference, let upper layer decide
         return None
 
     # 5) rubric_operational: Structure validation for determining if "100/85" holds
@@ -345,8 +321,9 @@ def validate_and_fix_level(
         # STRUCT_OK or other tiers -> VALID
         return True, errors
 
-    # fairness: If parse gets clear level (low/medium/high)
-    if parsed in ("低", "中", "高"):
+    # fairness: only the low tier is anchor-derivable; if the reason carries the
+    # low-tier template the output level must agree.
+    if parsed == "低":
         if parsed != level:
             errors["invalid_reason"] = f"fairness: parsed_level={parsed} != output_level={level}"
             return False, errors
@@ -361,194 +338,6 @@ def validate_and_fix_level(
 
     # 3) Cannot parse clear level from reason -> VALID (no assumptions)
     return True, errors
-
-
-# -----------------------------------------------------------------------------
-# [2025-12 Added] D1) Per-Dimension Schema/Anchor Validator
-# Integrates all validation logic and returns (valid, errors) for audit/filtering
-# -----------------------------------------------------------------------------
-def schema_validate_dim(
-        dim_id: str,
-        level: Optional[str],
-        score: Optional[float],
-        reason: Optional[str],
-        dim_cfg: Dict[str, Any],
-        guessing_c: Optional[float] = None,
-) -> Tuple[bool, List[str]]:
-    """
-    [D1] Per-Dimension Schema/Anchor Validator
-
-    Integrates all validation logic and returns specific errors for audit/filtering.
-
-    Args:
-        dim_id: Dimension ID
-        level: Model output level
-        score: Model output score (optional)
-        reason: Model output reason
-        dim_cfg: Dimension config containing allowed_levels, score_mapping etc.
-        guessing_c: Guessing probability (for specific dimension validation)
-
-    Returns:
-        (valid, errors)
-        - valid: True=passed validation, False=non-compliant and should be filtered
-        - errors: Specific error list for audit output
-    """
-    errors: List[str] = []
-
-    # ========== 1) JSON field completeness check ==========
-    if level is None or level == "":
-        errors.append("Missing required field 'level'")
-    if reason is None or reason == "":
-        errors.append("Missing required field 'reason'")
-
-    if errors:
-        return False, errors
-
-    # ========== 2) Level validity check ==========
-    sm = dim_cfg.get("score_mapping", {}) or {}
-    if sm.get("type") == "levels":
-        levels_cfg = sm.get("levels", []) or []
-        allowed_levels = [str(x.get("label", "")).strip() for x in levels_cfg if "label" in x]
-        allowed_levels = [x for x in allowed_levels if x]
-    else:
-        allowed_levels = ["低", "中", "高"]
-
-    if level not in allowed_levels:
-        errors.append(f"level='{level}' not in allowed list {allowed_levels}")
-
-    # ========== 3) Anchor validation (for dimensions requiring anchors) ==========
-    reason_text = reason or ""
-
-    # 3.0) stem_quality must contain the required action/object markers.
-    if dim_id == "stem_quality":
-        pattern = r"任务动作词=.+;\s*范围/对象=.+"
-        if not re.search(pattern, reason_text):
-            errors.append("stem_quality requires reason to contain '任务动作词=<verb>; 范围/对象=<noun phrase>' (both required)")
-
-    # 3.0b) option_exclusivity_coverage must contain the required comparison-axis markers.
-    if dim_id == "option_exclusivity_coverage":
-        pattern = r"竞争轴=.+;\s*[A-D]与?[A-D]=.+"
-        if not re.search(pattern, reason_text):
-            errors.append("option_exclusivity_coverage requires reason to contain '竞争轴=<axis>; <option pair>=<relation>' (e.g., '竞争轴=信息理解; B与C=近同义')")
-
-    # 3.1) answer_uniqueness: Must contain |C|=n
-    if dim_id == "answer_uniqueness":
-        m = re.search(r"\|C\|\s*=\s*([0-9]+)", _norm_text(reason_text))
-        if not m:
-            errors.append("answer_uniqueness requires reason to contain |C|=<0-4> (candidate correct set size)")
-        else:
-            c_val = int(m.group(1))
-            # Check anchor-level contradiction
-            if c_val == 1 and level != "唯一":
-                errors.append(f"|C|=1 should correspond to level='唯一', but output level='{level}'")
-            elif c_val == 0 and level not in ("次唯一/开放",):
-                errors.append(f"|C|=0 should correspond to level='次唯一/开放', but output level='{level}'")
-            elif c_val >= 2 and level not in ("不唯一",):
-                errors.append(f"|C|={c_val}>=2 should correspond to level='不唯一', but output level='{level}'")
-
-    # 3.2) distractor_headroom: Must contain N=<0-3> (N=effective misreading path count)
-    if dim_id == "distractor_headroom":
-        m = re.search(r"N\s*=\s*([0-3])", _norm_text(reason_text))
-        if not m:
-            errors.append("distractor_headroom requires reason to contain N=<0-3> (N=effective misreading path count)")
-        else:
-            n_val = int(m.group(1))
-            # Check N vs level consistency (N=3 means >=3, level="3")
-            level_n_map = {"0": 0, "1": 1, "2": 2, "3": 3}
-            expected_n = level_n_map.get(level)
-            if expected_n is not None and n_val != expected_n:
-                errors.append(f"level='{level}' expects N={expected_n}, but reason reports N={n_val}")
-
-    # 3.3) guessing_lower_asymptote: Must contain K=<0-3> (K=options excludable by form cues)
-    if dim_id == "guessing_lower_asymptote":
-        m = re.search(r"K\s*=\s*([0-3])", _norm_text(reason_text))
-        if not m:
-            errors.append("guessing_lower_asymptote requires reason to contain K=<0-3> (K=options excludable by form cues)")
-        else:
-            k_val = int(m.group(1))
-            # Check K vs level consistency (allowing adjacent tiers)
-            k_level_mapping = {
-                0: ["控制良好（难以蒙对）", "正常四选一"],
-                1: ["正常四选一", "略易蒙对"],
-                2: ["略易蒙对", "明显易蒙对"],
-                3: ["明显易蒙对", "接近送分题"],
-            }
-            valid_levels = k_level_mapping.get(k_val, [])
-            if level not in valid_levels:
-                errors.append(f"K={k_val} should correspond to {valid_levels}, but output level='{level}'")
-
-    # 3.4) fairness_regional_gender: Low tier requires low template phrases
-    if dim_id == "fairness_regional_gender":
-        low_templates = ["未发现可引用", "无可引用触发", "故判低", "低（100）", "判低（100）"]
-        parsed = _parse_level_from_reason(dim_id, reason_text)
-        if parsed == "低" and level != "低":
-            errors.append(f"reason contains low template phrase (e.g., '未发现可引用触发点'), but level='{level}' is not '低'")
-        elif parsed in ("中", "高") and level != parsed:
-            errors.append(f"reason parses to level='{parsed}', but output level='{level}', contradiction exists")
-
-    # 3.5) item_evidence_sufficiency: Different anchors required by level
-    if dim_id == "item_evidence_sufficiency":
-        # level 0/1 requires a concrete gap marker.
-        # level 2/3 requires a concrete closed-evidence marker.
-        low_levels = ["0", "1"]
-        high_levels = ["2", "3"]
-        has_gap = bool(re.search(r"缺口点=.+", reason_text))
-        has_evidence = bool(re.search(r"闭环证据=.+", reason_text))
-
-        if level in low_levels and not has_gap:
-            errors.append(f"item_evidence_sufficiency level='{level}' (partial self-sufficient or lower) requires reason to contain '缺口点=<specific gap>'")
-        elif level in high_levels and not has_evidence:
-            errors.append(f"item_evidence_sufficiency level='{level}' (basic self-sufficient or higher) requires reason to contain '闭环证据=<evidence point>'")
-
-    # 3.6) rubric_operational must contain point-count and boundary-count markers.
-    if dim_id == "rubric_operational":
-        pattern = r"要点数=(\d+);\s*边界数=(\d+)"
-        m = re.search(pattern, reason_text)
-        if not m:
-            errors.append("rubric_operational requires reason to contain '要点数=<m>; 边界数=<n>' (both required)")
-        else:
-            m_val = int(m.group(1))
-            n_val = int(m.group(2))
-            # Check points/boundaries vs level consistency
-            level_requirements = {
-                "100": {"m_min": 3, "n_min": 2},
-                "85": {"m_min": 2, "n_min": 1},
-                "70": {"m_min": 1, "n_min": 0},
-                "40": {"m_min": 1, "n_min": 0},
-                "0": {"m_min": 0, "n_min": 0},
-            }
-            req = level_requirements.get(level)
-            if req:
-                if m_val < req["m_min"]:
-                    errors.append(f"level='{level}' requires points>={req['m_min']}, but reports points={m_val}")
-                if n_val < req["n_min"]:
-                    errors.append(f"level='{level}' requires boundaries>={req['n_min']}, but reports boundaries={n_val}")
-
-    # ========== 4) Forbidden phrases hit check ==========
-    dim_rules = REASON_VALIDITY_RULES.get("by_dimension", {}).get(dim_id, {})
-    forbidden = dim_rules.get("forbidden_phrases", [])
-    if forbidden and _rv_has_any(reason_text, forbidden):
-        matched = [p for p in forbidden if p in reason_text]
-        errors.append(f"reason contains forbidden phrases: {matched[:3]}...")  # Only show first 3
-
-    # ========== 5) Semantic fit overreach check (guessing_lower_asymptote) ==========
-    if dim_id == "guessing_lower_asymptote":
-        sem_phrases = dim_rules.get("semantic_fit_phrases", [])
-        form_phrases = dim_rules.get("form_evidence_phrases", [])
-        option_regex = dim_rules.get("option_pointer_regex", r"")
-
-        has_sem = _rv_has_any(reason_text, sem_phrases)
-        has_form = _rv_has_any(reason_text, form_phrases)
-        has_option_pointer = bool(re.search(option_regex, reason_text)) if option_regex else False
-
-        if has_sem and has_option_pointer and (not has_form):
-            matched_sem = [p for p in sem_phrases if p in reason_text]
-            errors.append(f"Semantic fit overreach: reason uses intuition/fit words {matched_sem[:2]}, but lacks form evidence (like length/syntax/symmetry etc.)")
-
-    # Return result
-    is_valid = len(errors) == 0
-    return is_valid, errors
-
 
 # =============================================================================
 # Module Configuration
@@ -1751,19 +1540,22 @@ class AICentricEval:
             except Exception as e:
                 audits.append({"model": name, "parse_status": "error", "parse_error": str(e)})
 
-        # INVALID dimensions are excluded from aggregation without additional LLM repair calls.
+        # An INVALID per-model dimension is filled by fusing the other evaluators'
+        # scores for that dimension. No model is ever re-queried.
         final_invalid_count = 0
         for model_name, dims in model_results.items():
             for dim_id, dim_result in dims.items():
                 if dim_result.get("invalid") or dim_result.get("level") == "INVALID":
                     final_invalid_count += 1
 
+        fused_count = self._fuse_invalid_dimensions(model_results, weights, dims_cfg_eff)
         if final_invalid_count > 0:
             logger.warning(
-                f"[AICentricEval] {final_invalid_count} invalid model-dimension pairs will be excluded from aggregation"
+                f"[AICentricEval] {final_invalid_count} invalid model-dimension pairs fused from peer "
+                f"evaluators ({fused_count} entries filled; no models were re-queried)"
             )
 
-        # Aggregate only applicable dimensions; invalid dimension outputs are skipped.
+        # Aggregate applicable dimensions; invalid outputs were already fused above.
         final_dimensions = self._aggregate(
             model_results,
             weights,
@@ -1799,10 +1591,102 @@ class AICentricEval:
                 "skipped_dimensions": skipped,
                 "dimension_filter": dim_filter_result.to_dict(),
                 "final_invalid_count": final_invalid_count,
+                "fused_count": fused_count,
             },
             "applied_dimensions": dim_filter_result.applied_dimensions,
             "renormalized_weights": dim_filter_result.renormalized_weights,
         }
+
+    def _fuse_invalid_dimensions(
+            self,
+            model_results: Dict[str, Dict[str, Dict[str, Any]]],
+            model_weights: Dict[str, float],
+            dims_cfg: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Fill INVALID per-model dimension outputs by fusing the other evaluators'
+        valid scores for the same dimension. No additional LLM call is made.
+
+        For each applicable dimension:
+        - Collect the valid (score, weight, level) tuples across models.
+        - For every model whose output is INVALID (or missing) on that dimension,
+          impute its score as the weight-normalized mean of the valid scores and
+          its level as the majority valid level, so the model keeps its own weight
+          during aggregation instead of being dropped.
+        - If no model produced a valid score for the dimension, fall back to the
+          dimension's configured default level/score so the dimension still
+          contributes its weight to the weighted total.
+
+        Returns the number of model-dimension pairs that were fused.
+        """
+        fused_count = 0
+        for d in (dims_cfg or []):
+            dim_id = d.get("id") if isinstance(d, dict) else None
+            if not dim_id:
+                continue
+
+            sm = d.get("score_mapping", {}) or {}
+            if sm.get("type") == "levels":
+                levels = sm.get("levels", []) or []
+                allowed = [str(x.get("label", "")).strip() for x in levels if "label" in x]
+                allowed = [x for x in allowed if x]
+                default_level = allowed[len(allowed) // 2] if allowed else "N/A"
+            else:
+                default_level = "中"
+            default_score = map_level_to_score(dim_id, default_level, sm, None)
+
+            # Partition the models that responded into valid / invalid for this dimension.
+            valid: List[Tuple[float, float, str]] = []  # (score, weight, level)
+            invalid_models: List[str] = []
+            for model_name, dims in model_results.items():
+                entry = dims.get(dim_id)
+                w = float(model_weights.get(model_name, 0.0))
+                if (
+                    isinstance(entry, dict)
+                    and not entry.get("invalid")
+                    and entry.get("level") != "INVALID"
+                    and entry.get("score") is not None
+                ):
+                    try:
+                        valid.append((float(entry["score"]), w, str(entry.get("level", ""))))
+                        continue
+                    except (TypeError, ValueError):
+                        pass
+                invalid_models.append(model_name)
+
+            if not invalid_models:
+                continue
+
+            if valid:
+                vw = sum(w for _, w, _ in valid)
+                if vw > 0:
+                    fused_score = sum(s * w for s, w, _ in valid) / vw
+                else:
+                    fused_score = sum(s for s, _, _ in valid) / float(len(valid))
+                level_votes = Counter([lv for _, _, lv in valid if lv]).most_common(1)
+                fused_level = level_votes[0][0] if level_votes else default_level
+                fused_reason = "fused from peer evaluators (this evaluator's output was invalid)"
+                all_invalid = False
+            else:
+                fused_score = float(default_score)
+                fused_level = default_level
+                fused_reason = "all evaluators invalid on this dimension; configured default applied"
+                all_invalid = True
+
+            for model_name in invalid_models:
+                dims = model_results.get(model_name)
+                if dims is None:
+                    continue
+                dims[dim_id] = {
+                    "level": fused_level,
+                    "reason": fused_reason,
+                    "score": round(float(fused_score), 2),
+                    "fused": True,
+                    "all_invalid_fallback": all_invalid,
+                }
+                fused_count += 1
+
+        return fused_count
 
     def _aggregate(
             self,
@@ -1814,6 +1698,10 @@ class AICentricEval:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Aggregate multi-model evaluation results.
+
+        Invalid per-model dimensions are expected to have been fused upstream by
+        _fuse_invalid_dimensions, so every responding model carries a numeric
+        score for each applicable dimension here.
 
         Returns:
             - aggregated: {dim_id: {"level", "reason", "score", "weight"}}
@@ -1849,9 +1737,13 @@ class AICentricEval:
                     continue
 
                 levels.append(level_val)
-                r = str((dims.get(dim_id) or {}).get("reason", "")).strip()
-                if r:
-                    reasons.append(r)
+                # Keep the aggregated reason focused on genuine evaluator reasoning;
+                # skip the filler text attached to fused/fallback entries.
+                entry = dims.get(dim_id) or {}
+                if not entry.get("fused"):
+                    r = str(entry.get("reason", "")).strip()
+                    if r and r not in reasons:
+                        reasons.append(r)
 
             if not scored:
                 continue

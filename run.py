@@ -141,7 +141,6 @@ from update_bottom20_metrics import calculate_bottom_20_metrics
 from src.shared.report_generator import generate_reports_from_summary
 
 
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 def _print_runtime_files():
     """[2025-12 Refactoring] Print actual file paths used at runtime, confirm correct files are being modified"""
     print(f"[cli] file={__file__}")
@@ -160,7 +159,6 @@ def _print_runtime_files():
 # ============================================================================
 # Utility Functions: Path Sanitization, run-folder Naming, Manifest Writing
 # ============================================================================
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=8)
 
 def sanitize_path_component(s: str) -> str:
     """
@@ -177,7 +175,6 @@ def sanitize_path_component(s: str) -> str:
     # Strip leading/trailing underscores
     s = s.strip('_')
     return s or "unknown"
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 
 
 def build_run_folder_name(
@@ -306,7 +303,6 @@ def build_run_folder_name(
 
     parts.append(timestamp)
 
-    # DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
     return "_".join(parts)
 
 
@@ -338,7 +334,6 @@ def append_round_manifest(
     print(f"[Round Manifest] Record appended to: {manifest_path}")
 
 
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 # ============================================================================
 # Command-line argument parsing
 # ============================================================================
@@ -559,9 +554,9 @@ Note: When --round-id enabled, --output-dir represents output_root (default: out
     parser.add_argument(
         "--low-freq-count",
         type=int,
-        choices=[1, 3, 5],  # [2026-01 Refactored] Limit k=1/3/5 experiment settings
+        choices=[1, 3],  # Only k=1 and k=3 datasets ship (merged_low_freq_k{1,3}_jk_cs.json)
         default=3,
-        help="[--low-freq-random] Number of low-frequency dimensions assigned per question, options: 1/3/5, default: 3"
+        help="[--low-freq-random] Number of low-frequency dimensions assigned per question, options: 1/3, default: 3"
     )
 
     parser.add_argument(
@@ -820,7 +815,6 @@ Note: When --round-id enabled, --output-dir represents output_root (default: out
 
     return args
 
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 
 # ============================================================================
 # Experiment configuration creation
@@ -1061,7 +1055,6 @@ def create_experiment_config(args) -> ExperimentConfig:
     config.stage1_generation_model = None if args.run_mode in ("baseline", "stage2-only") else config.llm.model_name
 
     return config
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 
 
 # ============================================================================
@@ -2004,6 +1997,12 @@ def run_units(
             result_item["gk_metrics"] = gk_metrics  # [2025-12 Added] Independent GK evaluation metrics
             result_item["cs_metrics"] = cs_metrics  # [2025-12 Added] Independent CS evaluation metrics
 
+            # Surface a 0-100 pedagogical score (F1 * 100) so single-mode and reports
+            # show it, not just the raw P/R/F1 dict. Prefer combined ped, else GK, else CS.
+            _ped_for_score = ped_metrics or gk_metrics or cs_metrics
+            if _ped_for_score is not None and _ped_for_score.get("f1") is not None:
+                result_item["ped_overall_score"] = round(float(_ped_for_score["f1"]) * 100.0, 2)
+
             if ai_score is not None:
                 ai_scores.append(ai_score)
                 score_buckets[qt]["ai"].append(ai_score)
@@ -2354,7 +2353,6 @@ def run_single_mode(config: "ExperimentConfig", unit_id: str):
         "skip_reason": result_item.get("skip_reason"),
     }
 
-    # DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
     return result
 
 
@@ -2998,7 +2996,6 @@ def run_full_mode(
             "ped_macro_f1": summary["ped_round_metrics"]["macro"]["f1"],
         }
         append_round_manifest(round_root, manifest_record)
-# DEAD_CODE_CANDIDATE(reason=runtime_miss,trace=miss,refs=1)
 
     # Auto-extract generated questions as JSON and Markdown.
     try:

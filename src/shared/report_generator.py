@@ -54,6 +54,20 @@ def _status_cn(status: str) -> str:
     return mapping.get(status, status or "Unknown")
 
 
+def _fmt_score(value: Any, prec: int = 1) -> str:
+    """Format a numeric score, rendering missing/non-numeric values as '-'.
+
+    A genuine 0.0 is formatted (not hidden as '-'), and string-typed scores are
+    coerced rather than crashing the format call.
+    """
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.{prec}f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
 # ==================== Stage1 Report Generation ====================
 
 def generate_stage1_md_report(
@@ -355,12 +369,12 @@ def generate_experiment_md_report(
         for r in results:
             unit_id = r.get("unit_id", "?")
             qtype = _question_type_cn(r.get("question_type", ""))
-            ai_score = r.get("ai_overall_score", 0)
-            ped_score = r.get("ped_overall_score", 0)
+            ai_score = r.get("ai_overall_score")
+            ped_score = r.get("ped_overall_score")
             decision = _status_cn(r.get("final_decision", ""))
 
-            ai_str = f"{ai_score:.1f}" if ai_score else "-"
-            ped_str = f"{ped_score:.1f}" if ped_score else "-"
+            ai_str = _fmt_score(ai_score, 1)
+            ped_str = _fmt_score(ped_score, 1)
             lines.append(f"| {unit_id} | {qtype} | {ai_str} | {ped_str} | {decision} |")
         lines.append(f"")
 
@@ -376,13 +390,13 @@ def generate_experiment_md_report(
         lines.append(f"")
 
         # Scoring information
-        ai_score = r.get("ai_overall_score", 0)
-        ped_score = r.get("ped_overall_score", 0)
+        ai_score = r.get("ai_overall_score")
+        ped_score = r.get("ped_overall_score")
         decision = r.get("final_decision", "")
 
         lines.append(f"**Evaluation Results**:")
-        lines.append(f"- AI Overall Score: {ai_score:.2f}" if ai_score else "- AI Overall Score: -")
-        lines.append(f"- Pedagogical Overall Score: {ped_score:.2f}" if ped_score else "- Pedagogical Overall Score: -")
+        lines.append(f"- AI Overall Score: {_fmt_score(ai_score, 2)}")
+        lines.append(f"- Pedagogical Overall Score: {_fmt_score(ped_score, 2)}")
         lines.append(f"- Final Decision: {_status_cn(decision)}")
         lines.append(f"")
 

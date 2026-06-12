@@ -69,9 +69,6 @@ Thumbs.db
 *.bak
 nul
 
-# Claude Code local config
-.claude/
-
 # Test files
 ceshi.py
 data/ceshi.py

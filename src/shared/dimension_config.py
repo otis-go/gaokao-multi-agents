@@ -105,6 +105,15 @@ def get_low_freq_dims(domain: str) -> Set[str]:
         low_freq = [d for d in analysis[key]["low_freq_dims"] if not d.startswith("UNMAPPED:")]
         return set(low_freq)
 
+    # Default: all dimension codes minus the high-frequency set, so low-frequency
+    # mode stays functional even when the analysis file is absent.
+    if domain.lower() in ("gk", "gk_only"):
+        all_codes = {f"GK{i:02d}" for i in range(1, 18)}  # GK01-GK17
+        return all_codes - get_high_freq_dims("gk")
+    elif domain.lower() in ("cs", "cs_only"):
+        all_codes = {f"CS{i:02d}" for i in range(1, 22)}  # CS01-CS21
+        return all_codes - get_high_freq_dims("cs")
+
     return set()
 
 

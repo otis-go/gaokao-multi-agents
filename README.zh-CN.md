@@ -6,15 +6,17 @@
   <img src="gaokao_rc_schematic1.png" width="800" alt="框架结构图">
 </p>
 
-本项目是面向高考语文阅读理解任务的自动命题、求解与评估框架。系统包含 Stage1 四智能体生成流水线，以及覆盖 AI 维度、GK 维度和 CS 维度的 Stage2 评估流程。
+本项目是面向高考语文阅读理解任务的自动命题、求解与评估框架。系统将 **multi-agent（多智能体）** 的 Stage1 生成流水线与 **专家系统** 的 Stage2 评估层结合：GK（高考）维度与 CS（课标）维度的教育学评分细则编码了领域知识，既约束智能体的生成，也对每道题进行判定；同时由多模型集成对 AI 维度的质量进行打分。
 
 ## 核心功能
 
 - Stage1 四智能体流水线：材料选择、证据锚点发现、题目生成与求解、轻量质量校验。
+- 专家系统式评估：GK/CS 教育学维度细则（`data/gk_cs_eval.json`）与带硬锚点的 AI 维度细则（`data/ai_eval.json`）共同构成对每道题打分的知识库。
 - Stage2 评估模式：`ai`、`gk`、`cs`、`gk+cs`、`ai+gk`、`ai+cs`、`ai+gk+cs`。
-- Stage2 会自动去掉与 Stage1 生成模型同家族的评估模型。
+- Stage2 会自动去掉与 Stage1 生成模型同家族的评估模型，并对剩余模型权重重新归一化。
+- AI 维度评估对每个模型只调用一次：若某模型在某维度的输出无效，则用其余评估模型在该维度上的打分融合补齐，绝不重复调用模型。
 - 支持随机维度、hard-mix 维度、低频维度和无维度提示词等消融实验。
-- 支持 Stage1 与 Stage2 分开运行，便于切换网络环境并复现实验。
+- 支持 Stage1 与 Stage2 分开运行，便于切换网络环境并实现可重复的评估运行。
 
 ## 快速开始
 
@@ -28,6 +30,21 @@ python run.py --run-mode single --unit-id 1 --dim-mode gk --prompt-level C
 macOS 或 Linux 使用 `cp .env.example .env`，不要使用 Windows 的 `copy`。
 
 ## 配置说明
+
+### 需要哪些 API key？
+
+key 从项目根目录的 `.env` 读取（由 `.env.example` 复制而来）。启动时 `python-dotenv` 会自动加载 `.env`；若未安装该依赖，则需在 shell 中手动导出这些环境变量。
+
+对于**出厂默认配置**（`STAGE1_PRESET=openai_official`、`STAGE1_MODEL=gpt-5-mini-2025-08-07`、`STAGE2_NETWORK=overseas`，评估模型为 `doubao-seed-1-6`、`gpt-5-mini`、`deepseek-v3.2-exp-thinking`），只需两个 key：
+
+| Key | 用途 |
+| --- | --- |
+| `OPENAI_API_KEY` | Stage1 生成（gpt-5-mini）以及 Stage2 中的 GPT 评估模型 |
+| `DMX_OVERSEAS_API_KEY` | Stage2 中经 DMX 海外代理路由的评估模型（doubao、deepseek） |
+
+`DOUBAO_API_KEY`、`DEEPSEEK_API_KEY`、`GOOGLE_API_KEY`、`QWEN_API_KEY` 仅在你把 Stage1/Stage2 切换到对应厂商直连时才需要。注意：默认 Stage1 模型（`gpt-5-mini`）与 Stage2 的 `gpt-5-mini` 评估模型属于同一模型家族，会被家族解耦机制剔除，因此默认情况下 Stage2 实际运行的是两个经 DMX 路由的评估模型。
+
+### 在哪里修改设置
 
 1. API key 和服务入口地址配置在项目根目录的 `.env` 文件中。先复制 `.env.example`，再填写所需厂商的 key 和可选的 DMX 入口地址。
 

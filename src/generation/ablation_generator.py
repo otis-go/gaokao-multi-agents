@@ -342,9 +342,20 @@ class AblationOrchestrator:
         self.raw_materials = self._load_raw_materials()
         self.question_types = self._load_question_types()
 
+    def _data_path(self, filename: str) -> Path:
+        """Resolve a data file relative to the project root (CWD-independent)."""
+        project_root = Path(__file__).resolve().parents[2]
+        path = project_root / "data" / filename
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Required data file not found: {path}. "
+                f"Run from the repository or ensure data/{filename} is present."
+            )
+        return path
+
     def _load_raw_materials(self) -> Dict[str, Dict]:
         """Load raw materials."""
-        path = Path("data/raw_material.json")
+        path = self._data_path("raw_material.json")
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -353,7 +364,7 @@ class AblationOrchestrator:
 
     def _load_question_types(self) -> Dict[str, str]:
         """Load question type information."""
-        path = Path("data/merged_kaocha_jk_cs.json")
+        path = self._data_path("merged_kaocha_jk_cs.json")
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 

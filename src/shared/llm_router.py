@@ -461,8 +461,4 @@ __all__ = [
     "LLMRouter",
     "init_global_router",
     "get_global_router",
-    # Stage1 routing utilities
-    "STAGE1_PROVIDER_CONFIGS",
-    "infer_provider_from_model_name",
-    "resolve_stage1_backend",
 ]

@@ -313,7 +313,7 @@ class AiCentricEvalConfig:
 
     Design Notes:
     - Supports multi-model ensemble scoring: configurable LLMs with weights
-    - Reads evaluation dimension config from ai_eval_prompt.json
+    - Reads evaluation dimension config from ai_eval.json
     - Full score 100, configurable pass threshold
     - Uses STAGE2_EVAL_MODELS and MODEL_WEIGHT for parallel multi-model evaluation
 
@@ -324,10 +324,10 @@ class AiCentricEvalConfig:
     - pass_threshold: Pass threshold (0-100)
     - aggregate_method: Multi-model aggregation method ("weighted_average" / "majority_vote")
     """
-    enabled: bool = False  # [2026-01] Disabled by default, enable via --eval-mode ai
+    enabled: bool = False  # Disabled by default, enable via --eval-mode ai
     # Multi-model config: use models from STAGE2_EVAL_MODELS for ensemble scoring
     models: list = field(default_factory=_create_default_eval_models)
-    ai_eval_prompt_path: str = "data/ai_eval_prompt.json"
+    ai_eval_prompt_path: str = "data/ai_eval.json"
     pass_threshold: float = 70.0
     aggregate_method: str = "weighted_average"
     # Legacy field compatibility

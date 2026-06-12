@@ -730,9 +730,10 @@ class PedagogicalHitBasedEval:
         if not model_results:
             raise RuntimeError(f"All models failed. audits={audits[:3]}")
 
-        # Aggregate multi-model results.
+        # Aggregate multi-model results over the evaluators that actually responded.
+        # Using len(model_results) (not len(self.llm_clients)) avoids zeroing every
+        # prediction when one consensus model fails to return a parseable result.
         aggregated: Dict[str, Dict[str, Any]] = {}
-        expected_votes = len(self.llm_clients)
         for code in self.dimension_codes:
             hit_votes = 0
             total_votes = 0
@@ -746,10 +747,12 @@ class PedagogicalHitBasedEval:
                 if item.get("reason"):
                     reasons.append(item["reason"])
 
-            if self.aggregation_policy == "two_model_consensus" and expected_votes == 2:
-                # After generator-family exclusion, the two remaining evaluators must both hit.
-                final_hit = (total_votes == expected_votes and hit_votes == expected_votes)
+            if self.aggregation_policy == "two_model_consensus" and total_votes >= 2:
+                # After generator-family exclusion, every responding evaluator must hit.
+                final_hit = (hit_votes == total_votes)
             else:
+                # Majority vote over the evaluators that responded (also the fallback
+                # when only one of the two consensus models returned a result).
                 final_hit = hit_votes > total_votes / 2
             final_reason = reasons[0] if reasons else "No reason provided"
 

@@ -633,7 +633,7 @@ class ModelScorePair:
     Stage 2 -> AI-centric Evaluation -> Single model output in multi-model scoring
 
     Field Description:
-    - model_name: Model name (e.g., "gpt-4", "claude-3")
+    - model_name: Evaluator model id (one of the configured Stage2 eval models)
     - score: Score given by this model
     - reasoning: Scoring reasoning
     """
@@ -819,6 +819,12 @@ class PedagogicalHitBasedResult:
     model_results: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     # Audit info
     audit: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def overall_score(self) -> float:
+        """F1 mapped to a 0-100 score so the orchestrator can report it uniformly
+        alongside the AI-centric score."""
+        return round(float(self.f1) * 100.0, 1)
 
 
 @dataclass

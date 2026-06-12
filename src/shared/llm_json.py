@@ -353,7 +353,7 @@ def salvage_ai_fields(text: str) -> Dict[str, Any]:
     if not result["reason"]:
         result["reason"] = f"[Salvaged from non-standard output] {text[:100]}..."
 
-        return result
+    return result
 
 
 def salvage_pedagogical_fields(text: str) -> Dict[str, Any]:

@@ -592,9 +592,10 @@ class Agent4LightweightVerifier:
                 if answer_points:
                     prev_output_parts.append(f"  Answer points ({len(answer_points)}):")
                     for i, pt in enumerate(answer_points[:5], 1):
-                        content = getattr(pt, "content", "")
+                        # AnswerPoint stores the text under `point`; keep a `content` fallback.
+                        content = str(getattr(pt, "point", "") or getattr(pt, "content", "") or "")
                         score = getattr(pt, "score", 0)
-                        prev_output_parts.append(f"    {i}. [{score}pts] {content[:80]}{'...' if len(str(content)) > 80 else ''}")
+                        prev_output_parts.append(f"    {i}. [{score}pts] {content[:80]}{'...' if len(content) > 80 else ''}")
                     if len(answer_points) > 5:
                         prev_output_parts.append(f"    ... (total {len(answer_points)} points)")
 

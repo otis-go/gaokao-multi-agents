@@ -6,15 +6,17 @@ Language: [English](README.md) | [中文](README.zh-CN.md)
   <img src="gaokao_rc_schematic1.png" width="800" alt="Framework Architecture">
 </p>
 
-Automatic question generation, solving, and evaluation framework for Chinese Gaokao reading-comprehension tasks. The system uses a four-agent Stage1 generation pipeline and a Stage2 evaluation stack covering AI-centric, GK, and CS dimensions.
+Automatic question generation, solving, and evaluation framework for Chinese Gaokao reading-comprehension tasks. The system pairs a **multi-agent** Stage1 generation pipeline with an **expert-system** Stage2 evaluation layer: the GK (Gaokao) and CS (Curriculum-Standard) pedagogical dimension rubrics encode the domain knowledge that constrains what the agents generate and judges every item, while a multi-model ensemble scores AI-centric quality dimensions.
 
 ## Key Features
 
 - Four-agent Stage1 pipeline: material selection, anchor discovery, question generation/solving, and quality verification.
+- Expert-system evaluation: the GK/CS pedagogical dimension rubrics (`data/gk_cs_eval.json`) and the AI-centric dimension rubric with hard anchors (`data/ai_eval.json`) form the knowledge base that scores each item.
 - Stage2 evaluation modes: `ai`, `gk`, `cs`, `gk+cs`, `ai+gk`, `ai+cs`, and `ai+gk+cs`.
-- Stage2 automatically removes evaluator models from the same model family as the Stage1 generator.
+- Stage2 automatically removes evaluator models from the same model family as the Stage1 generator; remaining model weights are renormalized.
+- AI-centric scoring calls each evaluator once: if a model's dimension output is invalid it is filled by fusing the other evaluators' scores for that dimension (no model is ever re-queried).
 - Ablation modes for random dimensions, hard-mixed dimensions, low-frequency dimensions, and no-dimension prompts.
-- Split Stage1 and Stage2 execution for network switching and reproducible evaluation.
+- Split Stage1 and Stage2 execution for switching network environments and for repeatable evaluation runs.
 
 ## Quick Start
 
@@ -28,6 +30,21 @@ python run.py --run-mode single --unit-id 1 --dim-mode gk --prompt-level C
 On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 
 ## Configuration
+
+### Which API keys do I need?
+
+Keys are read from the root `.env` file (copied from `.env.example`). `python-dotenv` loads `.env` automatically at startup; if it is not installed, export the variables in your shell instead.
+
+For the **shipped default** (`STAGE1_PRESET=openai_official`, `STAGE1_MODEL=gpt-5-mini-2025-08-07`, `STAGE2_NETWORK=overseas`, evaluators `doubao-seed-1-6`, `gpt-5-mini`, `deepseek-v3.2-exp-thinking`) you need just two keys:
+
+| Key | Used for |
+| --- | --- |
+| `OPENAI_API_KEY` | Stage1 generation (gpt-5-mini) and the GPT evaluator in Stage2 |
+| `DMX_OVERSEAS_API_KEY` | Stage2 evaluators routed through the DMX overseas proxy (doubao, deepseek) |
+
+`DOUBAO_API_KEY`, `DEEPSEEK_API_KEY`, `GOOGLE_API_KEY`, and `QWEN_API_KEY` are only needed if you switch Stage1/Stage2 to those providers directly. Note that because the default Stage1 model (`gpt-5-mini`) and the Stage2 `gpt-5-mini` evaluator share a model family, the GPT evaluator is dropped by family decoupling, so Stage2 effectively runs the two DMX-routed evaluators.
+
+### Where to change settings
 
 1. API keys and provider entry URLs are configured in the root `.env` file. Start from `.env.example`, then set the provider keys and optional DMX base URLs you need.
 
