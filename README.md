@@ -35,14 +35,9 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 
 Keys are read from the root `.env` file (copied from `.env.example`). `python-dotenv` loads `.env` automatically at startup; if it is not installed, export the variables in your shell instead.
 
-For the **shipped default** (`STAGE1_PRESET=openai_official`, `STAGE1_MODEL=gpt-5-mini-2025-08-07`, `STAGE2_NETWORK=overseas`, evaluators `doubao-seed-1-6`, `gpt-5-mini`, `deepseek-v3.2-exp-thinking`) you need just two keys:
+For the **shipped default** (`STAGE1_PRESET=openai_official`, `STAGE1_MODEL=gpt-5.2`, `STAGE2_NETWORK=overseas`, evaluators `doubao-seed-1-6`, `gpt-5.2`, `deepseek-v3.2-exp-thinking`) you need just two keys:
 
-| Key | Used for |
-| --- | --- |
-| `OPENAI_API_KEY` | Stage1 generation (gpt-5-mini) and the GPT evaluator in Stage2 |
-| `DMX_OVERSEAS_API_KEY` | Stage2 evaluators routed through the DMX overseas proxy (doubao, deepseek) |
-
-`DOUBAO_API_KEY`, `DEEPSEEK_API_KEY`, `GOOGLE_API_KEY`, and `QWEN_API_KEY` are only needed if you switch Stage1/Stage2 to those providers directly. Note that because the default Stage1 model (`gpt-5-mini`) and the Stage2 `gpt-5-mini` evaluator share a model family, the GPT evaluator is dropped by family decoupling, so Stage2 effectively runs the two DMX-routed evaluators.
+`DOUBAO_API_KEY`, `DEEPSEEK_API_KEY`, `GOOGLE_API_KEY`, and `QWEN_API_KEY` are only needed if you switch Stage1/Stage2 to those providers directly. 
 
 ### Where to change settings
 
@@ -50,23 +45,23 @@ For the **shipped default** (`STAGE1_PRESET=openai_official`, `STAGE1_MODEL=gpt-
 
 2. Stage1 model routing is configured in `src/shared/api_config.py` by editing `STAGE1_PRESET` and `STAGE1_MODEL`. `STAGE1_PRESET` selects the provider route, while `STAGE1_MODEL` selects the concrete generation model.
 
-3. Stage2 evaluation network routing is configured in `src/shared/api_config.py` by editing `STAGE2_NETWORK`. Use `overseas` for overseas routes and `domestic` for the domestic proxy route.
+3. Stage2 evaluation network routing is configured in `src/shared/api_config.py` by editing `STAGE2_NETWORK`. 
 
-4. Stage2 evaluator ensemble is configured in `src/shared/api_config.py` via `STAGE2_EVAL_MODELS` and `STAGE2_MODEL_WEIGHTS`. Keep the defaults if you want to reproduce the current evaluator setup.
-
-During Stage2, the framework detects the Stage1 generation model and excludes any evaluator from the same model family. If this leaves two pedagogical evaluators, a dimension is counted as hit only when both evaluators mark it as hit. AI-centric evaluation uses the remaining evaluators with renormalized model weights.
+4. Stage2 evaluator ensemble is configured in `src/shared/api_config.py` via `STAGE2_EVAL_MODELS` and `STAGE2_MODEL_WEIGHTS`. 
 
 ## CLI Reference
+
+Unless `--subset-size` is explicitly provided, dataset-level modes run the complete 181-unit dataset.
 
 | Mode | Purpose | Example |
 | --- | --- | --- |
 | `single` | Run one unit through Stage1 and Stage2 | `python run.py --run-mode single --unit-id 1` |
-| `full` | Run all units or a sampled subset | `python run.py --run-mode full --subset-size 40` |
+| `full` | Run all 181 units by default, or an optional sampled subset | `python run.py --run-mode full` |
 | `baseline` | Evaluate original exam questions directly | `python run.py --run-mode baseline --eval-mode gk` |
 | `extract` | Extract generated questions from an output folder | `python run.py --run-mode extract --extract-dir outputs/EXP_xxx` |
-| `stage1-only` | Generate Stage1 artifacts only | `python run.py --run-mode stage1-only --subset-size 40` |
+| `stage1-only` | Generate Stage1 artifacts for all 181 units by default | `python run.py --run-mode stage1-only` |
 | `stage2-only` | Evaluate an existing Stage1 output folder | `python run.py --run-mode stage2-only --stage1-dir outputs/EXP_xxx` |
-| `ablation-nodim` | Run the no-dimension prompt ablation | `python run.py --run-mode ablation-nodim --subset-size 40 --eval-mode ai+gk+cs` |
+| `ablation-nodim` | Run the no-dimension prompt ablation on all 181 units by default | `python run.py --run-mode ablation-nodim --eval-mode ai+gk+cs` |
 
 Common parameters:
 
@@ -75,7 +70,7 @@ Common parameters:
 | `--dim-mode` | Stage1 pedagogical dimension family | `gk`, `cs` |
 | `--prompt-level` | Prompt detail level | `A`, `B`, `C` |
 | `--eval-mode` | Stage2 evaluator set | `ai`, `gk`, `cs`, `gk+cs`, `ai+gk+cs` |
-| `--subset-size` | Sample size for subset runs | `40`, `60` |
+| `--subset-size` | Optional sample size for subset runs; omit it to run all 181 units | e.g. `60` |
 | `--subset-strategy` | Sampling strategy | `proportional_stratified`, `stratified`, `random` |
 | `--exam-type` | Baseline exam filter | `all`, `national`, `local` |
 
@@ -85,34 +80,21 @@ Common parameters:
 # Single-unit run
 python run.py --run-mode single --unit-id 1 --dim-mode gk --prompt-level C
 
-# Stratified 40-unit run
-python run.py --run-mode full --subset-size 40 --dim-mode gk --prompt-level C
+# Full 181-unit run (default)
+python run.py --run-mode full --dim-mode gk --prompt-level C
 
 # Stage1 then Stage2, useful when changing network environments
-python run.py --run-mode stage1-only --subset-size 40
+python run.py --run-mode stage1-only
 python run.py --run-mode stage2-only --stage1-dir outputs/EXP_xxx --eval-mode ai+gk+cs
 
 # Original exam-question baseline
 python run.py --run-mode baseline --eval-mode gk --exam-type national
 
 # No-dimension ablation
-python run.py --run-mode ablation-nodim --subset-size 40 --eval-mode ai+gk+cs
+python run.py --run-mode ablation-nodim --eval-mode ai+gk+cs
 
 # Extract generated questions
 python run.py --run-mode extract --extract-dir outputs/EXP_xxx --extract-format markdown
-```
-
-## No-API Smoke Checks
-
-These checks validate local wiring without making real model calls:
-
-```bash
-python run.py --help
-python src/shared/api_config.py
-python tools/check_stage_independence.py
-python tools/check_static_alignment.py
-python scripts/extract_questions.py --help
-python -m compileall -q run.py src scripts tools output_analysis
 ```
 
 ## Project Structure
